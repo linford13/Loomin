@@ -1,10 +1,12 @@
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 import pandas as pd
 import streamlit as st
 from pydantic import BaseModel
 from typing import List, Optional
+from PIL import Image
+from pypdf import PdfReader
 from google import genai
 from google.genai import types
 
@@ -13,7 +15,7 @@ st.set_page_config(page_title="Academic Co-Pilot", page_icon="🎓", layout="wid
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    st.error("Please set the GEMINI_API_KEY environment variable.")
+    st.error("Please set the GEMINI_API_KEY secret in Streamlit.")
     st.stop()
 
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -52,21 +54,24 @@ class ExtractedTopic(BaseModel):
 class ExtractedDue(BaseModel):
     subject: str
     task: str
-    due_date: Optional[str]  # Format: YYYY-MM-DD
+    due_date: Optional[str]
 
 class AcademicPayload(BaseModel):
     topics: List[ExtractedTopic]
     dues: List[ExtractedDue]
 
-def parse_with_ai(raw_text: str) -> AcademicPayload:
-    prompt = f"""
+def parse_with_ai(content_items: list) -> AcademicPayload:
+    system_instruction = f"""
     Current Date: {date.today().isoformat()}
-    Extract study topics covered and pending assignments or deadlines from this student note:
-    "{raw_text}"
+    Extract study topics covered and pending assignments, lab dues, or academic deadlines from the provided text, document, or image.
+    If a due date is relative (e.g., 'tomorrow', 'next Monday'), resolve it into YYYY-MM-DD using the current date.
     """
+    
+    contents = [system_instruction] + content_items
+    
     response = ai_client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=prompt,
+        contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=AcademicPayload
@@ -77,31 +82,63 @@ def parse_with_ai(raw_text: str) -> AcademicPayload:
 # ----------------- UI Layout -----------------
 st.title("🎓 Academic Work & Dues Tracker")
 
-# 1. Quick Ingestion Box
-with st.expander("📝 Log Today's Lecture Notes / Deadlines", expanded=True):
+with st.expander("📝 Log Notes, Blackboard Snaps, or Circular PDFs", expanded=True):
     user_input = st.text_area(
-        "Dump your raw notes or class updates here:",
-        placeholder="e.g., In Math we finished Cayley-Hamilton and Diagonalization. Homework 2 is due Friday. Physics lab record observation due tomorrow."
+        "Dump your raw notes or class updates here (optional if uploading a file):",
+        placeholder="e.g., Covered Cayley-Hamilton. Homework 2 due Friday."
     )
+    
+    uploaded_file = st.file_uploader(
+        "Or upload an image / circular PDF / text document:",
+        type=["png", "jpg", "jpeg", "pdf", "txt"]
+    )
+    
     if st.button("Analyze & Log", type="primary"):
+        content_items = []
+        
         if user_input.strip():
-            with st.spinner("AI is processing..."):
-                extracted = parse_with_ai(user_input)
+            content_items.append(user_input)
+            
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            
+            # Process Images (Board photos, noticeboard snaps)
+            if "image" in file_type:
+                img = Image.open(uploaded_file)
+                content_items.append(img)
+                
+            # Process PDFs (Circulars, syllabus sheets)
+            elif "pdf" in file_type:
+                reader = PdfReader(uploaded_file)
+                pdf_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+                content_items.append(f"PDF Content:\n{pdf_text}")
+                
+            # Process Plain Text
+            elif "text" in file_type:
+                text_content = uploaded_file.read().decode("utf-8")
+                content_items.append(f"File Content:\n{text_content}")
+
+        if not content_items:
+            st.warning("Please type some notes or upload a file first.")
+        else:
+            with st.spinner("Gemini is reading and extracting your tasks..."):
+                extracted = parse_with_ai(content_items)
+                
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
-                # Save topics
                 for t in extracted.topics:
                     c.execute(
                         "INSERT INTO topics (subject, summary, logged_date) VALUES (?, ?, ?)",
                         (t.subject, t.summary, str(date.today()))
                     )
-                # Save dues
+                    
                 for d in extracted.dues:
                     c.execute(
                         "INSERT INTO dues (subject, task, due_date, status) VALUES (?, ?, ?, 'Pending')",
                         (d.subject, d.task, d.due_date if d.due_date else "TBD")
                     )
+                    
                 conn.commit()
                 conn.close()
                 st.success("Successfully logged topics and upcoming dues!")
@@ -109,9 +146,8 @@ with st.expander("📝 Log Today's Lecture Notes / Deadlines", expanded=True):
 
 st.divider()
 
-# 2. Main Dashboard (Two Columns)
+# ----------------- Dashboard View -----------------
 col1, col2 = st.columns([1, 1])
-
 conn = sqlite3.connect(DB_FILE)
 
 with col1:
@@ -142,7 +178,7 @@ with col2:
     else:
         st.dataframe(topics_df, use_container_width=True, hide_index=True)
 
-# 3. Weekly & Daily Summarizer Section
+# ----------------- Summarizer Reports -----------------
 st.divider()
 st.subheader("📊 Generate Summary Reports")
 rep_col1, rep_col2 = st.columns(2)
