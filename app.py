@@ -11,11 +11,17 @@ from google import genai
 from google.genai import types
 
 # ----------------- Configuration & DB -----------------
-st.set_page_config(page_title="Academic Co-Pilot", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="Academic Work & Dues Tracker", page_icon="🎓", layout="wide")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Read API Key from st.secrets first, then fall back to os.environ
+GEMINI_API_KEY = None
+if "GEMINI_API_KEY" in st.secrets:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+else:
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 if not GEMINI_API_KEY:
-    st.error("Please set the GEMINI_API_KEY secret in Streamlit.")
+    st.error("⚠️ GEMINI_API_KEY is not configured! Please add it to your Streamlit Cloud Secrets.")
     st.stop()
 
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -60,89 +66,109 @@ class AcademicPayload(BaseModel):
     topics: List[ExtractedTopic]
     dues: List[ExtractedDue]
 
-def parse_with_ai(content_items: list) -> AcademicPayload:
+def parse_with_ai(content_items: list) -> Optional[AcademicPayload]:
     system_instruction = f"""
     Current Date: {date.today().isoformat()}
-    Extract study topics covered and pending assignments, lab dues, or academic deadlines from the provided text, document, or image.
-    If a due date is relative (e.g., 'tomorrow', 'next Monday'), resolve it into YYYY-MM-DD using the current date.
+    Analyze the student's note and attached documents/images.
+    1. Extract the main topics covered or actively ongoing.
+    2. Extract any upcoming deadlines, assignments, submissions, or dues.
+    If a due date is relative (e.g., 'next Monday', 'tomorrow'), resolve it into YYYY-MM-DD format using current date.
     """
     
     contents = [system_instruction] + content_items
+
+    # Fallback cascade to prevent ClientError
+    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
     
-    response = ai_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=AcademicPayload
-        )
-    )
-    return AcademicPayload.model_validate_json(response.text)
+    for model_name in models_to_try:
+        try:
+            response = ai_client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=AcademicPayload
+                )
+            )
+            return AcademicPayload.model_validate_json(response.text)
+        except Exception as e:
+            if model_name == models_to_try[-1]:
+                st.error(f"API Error ({model_name}): {e}")
+                return None
+            continue
 
 # ----------------- UI Layout -----------------
 st.title("🎓 Academic Work & Dues Tracker")
 
 with st.expander("📝 Log Notes, Blackboard Snaps, or Circular PDFs", expanded=True):
     user_input = st.text_area(
-        "Dump your raw notes or class updates here (optional if uploading a file):",
-        placeholder="e.g., Covered Cayley-Hamilton. Homework 2 due Friday."
+        "Dump your raw notes or class updates here (optional if uploading files):",
+        placeholder="e.g., Covered module 1 in Physics. Lab record due Friday."
     )
     
-    uploaded_file = st.file_uploader(
-        "Or upload an image / circular PDF / text document:",
-        type=["png", "jpg", "jpeg", "pdf", "txt"]
+    uploaded_files = st.file_uploader(
+        "Or upload images / circular PDFs / text documents (multiple allowed):",
+        type=["png", "jpg", "jpeg", "pdf", "txt"],
+        accept_multiple_files=True
     )
     
     if st.button("Analyze & Log", type="primary"):
         content_items = []
         
         if user_input.strip():
-            content_items.append(user_input)
+            content_items.append(f"Student Notes:\n{user_input}")
             
-        if uploaded_file is not None:
-            file_type = uploaded_file.type
-            
-            # Process Images (Board photos, noticeboard snaps)
-            if "image" in file_type:
-                img = Image.open(uploaded_file)
-                content_items.append(img)
+        if uploaded_files:
+            for file in uploaded_files:
+                file_type = file.type
                 
-            # Process PDFs (Circulars, syllabus sheets)
-            elif "pdf" in file_type:
-                reader = PdfReader(uploaded_file)
-                pdf_text = "\n".join([page.extract_text() or "" for page in reader.pages])
-                content_items.append(f"PDF Content:\n{pdf_text}")
-                
-            # Process Plain Text
-            elif "text" in file_type:
-                text_content = uploaded_file.read().decode("utf-8")
-                content_items.append(f"File Content:\n{text_content}")
+                # Image processing
+                if "image" in file_type:
+                    img = Image.open(file)
+                    content_items.append(img)
+                    
+                # PDF processing
+                elif "pdf" in file_type:
+                    reader = PdfReader(file)
+                    extracted_pages = []
+                    for page in reader.pages[:10]:
+                        txt = page.extract_text()
+                        if txt:
+                            extracted_pages.append(txt)
+                    pdf_text = "\n".join(extracted_pages)
+                    content_items.append(f"PDF ({file.name}):\n{pdf_text[:6000]}")
+                    
+                # Plain Text processing
+                elif "text" in file_type:
+                    text_content = file.read().decode("utf-8")
+                    content_items.append(f"File ({file.name}):\n{text_content[:6000]}")
 
         if not content_items:
-            st.warning("Please type some notes or upload a file first.")
+            st.warning("Please type some notes or upload at least one file first.")
         else:
-            with st.spinner("Gemini is reading and extracting your tasks..."):
+            with st.spinner("Gemini is reading all files and extracting your tasks..."):
                 extracted = parse_with_ai(content_items)
                 
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                
-                for t in extracted.topics:
-                    c.execute(
-                        "INSERT INTO topics (subject, summary, logged_date) VALUES (?, ?, ?)",
-                        (t.subject, t.summary, str(date.today()))
-                    )
+                if extracted:
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
                     
-                for d in extracted.dues:
-                    c.execute(
-                        "INSERT INTO dues (subject, task, due_date, status) VALUES (?, ?, ?, 'Pending')",
-                        (d.subject, d.task, d.due_date if d.due_date else "TBD")
-                    )
-                    
-                conn.commit()
-                conn.close()
-                st.success("Successfully logged topics and upcoming dues!")
-                st.rerun()
+                    for t in extracted.topics:
+                        c.execute(
+                            "INSERT INTO topics (subject, summary, logged_date) VALUES (?, ?, ?)",
+                            (t.subject, t.summary, str(date.today()))
+                        )
+                        
+                    for d in extracted.dues:
+                        c.execute(
+                            "INSERT INTO dues (subject, task, due_date, status) VALUES (?, ?, ?, 'Pending')",
+                            (d.subject, d.task, d.due_date if d.due_date else "TBD")
+                        )
+                        
+                    conn.commit()
+                    conn.close()
+                    st.success("Successfully logged topics and upcoming dues!")
+                    st.rerun()
 
 st.divider()
 
