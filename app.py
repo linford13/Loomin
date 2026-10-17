@@ -1,4 +1,4 @@
-import os, sqlite3
+import os, sqlite3, time
 from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
@@ -38,26 +38,59 @@ if not KEY:
     st.error("Missing GEMINI_API_KEY in Secrets.")
     st.stop()
 
-client = genai.Client(api_key=KEY)
+ai_client = genai.Client(api_key=KEY)
 conn = sqlite3.connect("milo_study.db")
 conn.execute("CREATE TABLE IF NOT EXISTS topics(id INTEGER PRIMARY KEY,subject TEXT,topic TEXT,module TEXT,logged_date TEXT)")
 conn.execute("CREATE TABLE IF NOT EXISTS dues(id INTEGER PRIMARY KEY,subject TEXT,task TEXT,due_date TEXT,status TEXT)")
 
-class Topic(BaseModel):
+class ExtractedTopic(BaseModel):
     subject: str
     topic: str
     module: str
 
-class Due(BaseModel):
+class ExtractedDue(BaseModel):
     subject: str
     task: str
     due_date: str
 
-class Payload(BaseModel):
-    is_study: bool
-    reply: str
-    topics: List[Topic]
-    dues: List[Due]
+class MiloPayload(BaseModel):
+    has_academic_content: bool
+    assistant_reply: str
+    topics: List[ExtractedTopic]
+    dues: List[ExtractedDue]
+
+def parse_with_milo(content_items: list):
+    today_iso = date.today().isoformat()
+    prompt_parts = [
+        "Current Date: " + today_iso,
+        "You are MILO, an academic tracker for a college student.",
+        "Extract topics taught and upcoming dues from notes or files.",
+        "Use 'General' if module is unknown.",
+        "Convert relative dates (like tomorrow or Friday) to YYYY-MM-DD.",
+        "Use 'TBD' if due_date is unknown.",
+        "If input is casual chat, set has_academic_content=False and write a friendly response in assistant_reply."
+    ]
+    sys_prompt = "\n".join(prompt_parts)
+    
+    for attempt in range(3):
+        try:
+            response = ai_client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=[sys_prompt] + content_items,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=MiloPayload
+                )
+            )
+            if response.parsed:
+                return response.parsed
+            return MiloPayload.model_validate_json(response.text)
+        except Exception as e:
+            if "503" in str(e) and attempt < 2:
+                time.sleep(2)
+                continue
+            st.error("MILO engine error: " + str(e))
+            return None
 
 # Top Header: Logo on left
 logo_svg = (
@@ -87,7 +120,7 @@ if prompt:
     txt = getattr(prompt, "text", "") or ""
     files = getattr(prompt, "files", []) or []
     if txt.strip() or files:
-        items = ["Today is " + date.today().isoformat() + ". Extract topics and dues (YYYY-MM-DD). Set is_study=False if casual chat."]
+        items = ["Today is " + date.today().isoformat() + ". Extract topics and dues (YYYY-MM-DD). Set has_academic_content=False if casual chat."]
         if txt.strip():
             items.append(txt)
         for f in files:
@@ -98,25 +131,17 @@ if prompt:
             else:
                 items.append(f.read().decode("utf-8")[:5000])
         with st.spinner(""):
-            try:
-                r = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=items,
-                    config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Payload)
-                )
-                data = r.parsed or Payload.model_validate_json(r.text)
-                if not data.is_study:
-                    st.session_state["reply"] = data.reply or "Hey! Send class notes or deadlines anytime."
+            res = parse_with_milo(items)
+            if res is not None:
+                if not res.has_academic_content:
+                    st.session_state["reply"] = res.assistant_reply or "Hey! Send class notes or deadlines anytime."
                 else:
                     st.session_state["reply"] = ""
-                    for t in data.topics:
+                    for t in res.topics:
                         conn.execute("INSERT INTO topics(subject,topic,module,logged_date)VALUES(?,?,?,?)", (t.subject, t.topic, t.module or "General", str(date.today())))
-                    for d in data.dues:
+                    for d in res.dues:
                         conn.execute("INSERT INTO dues(subject,task,due_date,status)VALUES(?,?,?,'Pending')", (d.subject, d.task, d.due_date or "TBD"))
                     conn.commit()
-                st.rerun()
-            except Exception as e:
-                st.session_state["reply"] = "Error: " + str(e)
                 st.rerun()
 
 st.write("")
@@ -134,8 +159,9 @@ with left:
     if not dues.empty:
         with st.expander("Mark Complete"):
             for _, r in dues.iterrows():
-                if st.button("✓ " + str(r.subject) + ": " + str(r.task)[:15], key="d" + str(r.id), use_container_width=True):
-                    conn.execute("UPDATE dues SET status='Done' WHERE id=?", (int(r.id),))
+                row_id = int(r["id"])
+                if st.button("✓ " + str(r.subject) + ": " + str(r.task)[:15], key="d" + str(row_id), use_container_width=True):
+                    conn.execute("UPDATE dues SET status='Done' WHERE id=?", (row_id,))
                     conn.commit()
                     st.rerun()
 
