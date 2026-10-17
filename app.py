@@ -77,27 +77,21 @@ def parse_with_ai(content_items: list) -> Optional[AcademicPayload]:
     
     contents = [system_instruction] + content_items
 
-    # Fallback cascade to prevent ClientError
-    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
-    
-    for model_name in models_to_try:
-        try:
-            response = ai_client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=AcademicPayload
-                )
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=AcademicPayload
             )
-            return AcademicPayload.model_validate_json(response.text)
-        except Exception as e:
-            if model_name == models_to_try[-1]:
-                st.error(f"API Error ({model_name}): {e}")
-                return None
-            continue
-
-# ----------------- UI Layout -----------------
+        )
+        if response.parsed:
+            return response.parsed
+        return AcademicPayload.model_validate_json(response.text)
+    except Exception as e:
+        st.error(f"API Error (gemini-2.5-flash): {e}")
+        return None# ----------------- UI Layout -----------------
 st.title("🎓 Academic Work & Dues Tracker")
 
 with st.expander("📝 Log Notes, Blackboard Snaps, or Circular PDFs", expanded=True):
