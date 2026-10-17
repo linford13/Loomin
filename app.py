@@ -83,15 +83,6 @@ st.markdown("""
         border-bottom: 1px dotted #e2d9b5;
     }
 
-    /* Right Discussion Frame */
-    .discussion-frame {
-        border: 2.5px solid #ffffff;
-        border-radius: 28px;
-        padding: 24px;
-        min-height: 310px;
-        background: #0b0f17;
-    }
-
     /* Chat bubble aesthetic */
     .stTextInput > div > div > input {
         background-color: #fceee8 !important;
@@ -102,7 +93,6 @@ st.markdown("""
         font-size: 1rem !important;
     }
     
-    /* Remove default streamlit borders around forms */
     [data-testid="stForm"] {
         border: none !important;
         padding: 0 !important;
@@ -193,7 +183,6 @@ st.markdown("<div class='milo-logo'>MILO</div>", unsafe_allow_html=True)
 
 # ----------------- Chat Bar with (+) File Drawer -----------------
 with st.container():
-    # Chat Input Row
     with st.form("milo_chat_form", clear_on_submit=True):
         f_col1, f_col2 = st.columns([11, 1])
         with f_col1:
@@ -205,7 +194,6 @@ with st.container():
         with f_col2:
             submit_btn = st.form_submit_button("Send", use_container_width=True)
 
-    # Drawer for (+) File Uploads
     with st.expander("➕ Attach Files (Blackboard photos, Syllabus PDFs, Note docs)"):
         uploaded_files = st.file_uploader(
             "Upload files",
@@ -251,7 +239,7 @@ if submit_btn and (chat_text.strip() or uploaded_files):
 st.write("")
 st.write("")
 
-# ----------------- Main Display (Sticky Note + Discussion Frame) -----------------
+# ----------------- Main Display -----------------
 col_left, col_right = st.columns([1, 2], gap="large")
 conn = sqlite3.connect(DB_FILE)
 
@@ -262,7 +250,12 @@ with col_left:
         conn
     )
     
-    sticky_html = """
-    <div class='sticky-container'>
-        <div class='pin'></div>
-        <div class='sticky-title'>📌
+    items_html = ""
+    if dues.empty:
+        items_html = "<div style='text-align:center; padding-top:40px; color:#52525b;'>No dues pending!<br>Enjoy your day ✨</div>"
+    else:
+        for _, row in dues.iterrows():
+            items_html += (
+                "<div class='sticky-item'>"
+                f"<strong>[{row['subject']}]</strong> {row['task']}<br>"
+                f"<span style='color: #dc2
