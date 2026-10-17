@@ -47,6 +47,7 @@ class ExtractedTopic(BaseModel):
     subject: str
     topic: str
     module: str
+    logged_date: str  # Added date extraction per topic
 
 class ExtractedDue(BaseModel):
     subject: str
@@ -66,8 +67,8 @@ def parse_with_milo(content_items: list):
         "You are MILO, an academic tracker for a college student.",
         "Extract topics taught and upcoming dues from notes or files.",
         "Use 'General' if module is unknown.",
-        "Convert relative dates (like tomorrow or Friday) to YYYY-MM-DD.",
-        "Use 'TBD' if due_date is unknown.",
+        "CRITICAL FOR DATES: Look closely at the notes for any mentioned dates (e.g. 'yesterday', 'on Oct 15', 'Monday'). If a specific date is mentioned or implied for a topic, resolve it into YYYY-MM-DD format for 'logged_date'. If no date is mentioned at all, default logged_date to today (" + today_iso + ").",
+        "Convert relative due dates to YYYY-MM-DD format. Use 'TBD' if unknown.",
         "If input is casual chat, set has_academic_content=False and write a friendly response in assistant_reply."
     ]
     sys_prompt = "\n".join(prompt_parts)
@@ -106,7 +107,6 @@ logo_svg = (
 )
 st.markdown(logo_svg, unsafe_allow_html=True)
 
-# Centered Chat Bar
 prompt = st.chat_input(
     "Ask MILO, paste lecture updates, or drop deadlines...",
     accept_file="multiple",
@@ -120,7 +120,7 @@ if prompt:
     txt = getattr(prompt, "text", "") or ""
     files = getattr(prompt, "files", []) or []
     if txt.strip() or files:
-        items = ["Today is " + date.today().isoformat() + ". Extract topics and dues (YYYY-MM-DD). Set has_academic_content=False if casual chat."]
+        items = ["Today is " + date.today().isoformat() + ". Extract topics and dues. Set has_academic_content=False if casual chat."]
         if txt.strip():
             items.append(txt)
         for f in files:
@@ -138,7 +138,8 @@ if prompt:
                 else:
                     st.session_state["reply"] = ""
                     for t in res.topics:
-                        conn.execute("INSERT INTO topics(subject,topic,module,logged_date)VALUES(?,?,?,?)", (t.subject, t.topic, t.module or "General", str(date.today())))
+                        log_d = t.logged_date if t.logged_date else str(date.today())
+                        conn.execute("INSERT INTO topics(subject,topic,module,logged_date)VALUES(?,?,?,?)", (t.subject, t.topic, t.module or "General", log_d))
                     for d in res.dues:
                         conn.execute("INSERT INTO dues(subject,task,due_date,status)VALUES(?,?,?,'Pending')", (d.subject, d.task, d.due_date or "TBD"))
                     conn.commit()
@@ -146,7 +147,6 @@ if prompt:
 
 st.write("")
 
-# Main Body Grid: Left Sticky Note, Right Discussion Slate
 left, right = st.columns([1, 1.8], gap="large")
 
 with left:
@@ -184,5 +184,13 @@ with right:
             for _, r in df.iterrows()
         ]) or "<p style='color:#64748b;padding-top:45px;text-align:center'>No discussions logged for this period yet.</p>"
         st.markdown(items_html, unsafe_allow_html=True)
+
+st.write("")
+with st.expander("⚙️ Manage / Reset Database"):
+    if st.button("🗑️ Clear All Logged Topics (Reset Today's Tab)", type="primary"):
+        conn.execute("DELETE FROM topics")
+        conn.commit()
+        st.success("Cleared all topics! You can now re-log them with correct past dates.")
+        st.rerun()
 
 conn.close()
