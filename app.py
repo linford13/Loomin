@@ -47,7 +47,7 @@ class ExtractedTopic(BaseModel):
     subject: str
     topic: str
     module: str
-    logged_date: str  # Added date extraction per topic
+    logged_date: str
 
 class ExtractedDue(BaseModel):
     subject: str
@@ -67,7 +67,7 @@ def parse_with_milo(content_items: list):
         "You are MILO, an academic tracker for a college student.",
         "Extract topics taught and upcoming dues from notes or files.",
         "Use 'General' if module is unknown.",
-        "CRITICAL FOR DATES: Look closely at the notes for any mentioned dates (e.g. 'yesterday', 'on Oct 15', 'Monday'). If a specific date is mentioned or implied for a topic, resolve it into YYYY-MM-DD format for 'logged_date'. If no date is mentioned at all, default logged_date to today (" + today_iso + ").",
+        "CRITICAL FOR DATES: Look closely at notes for mentioned dates (e.g. 'yesterday', 'Oct 15'). Resolve into YYYY-MM-DD format for 'logged_date'. If no date is mentioned, default logged_date to today (" + today_iso + ").",
         "Convert relative due dates to YYYY-MM-DD format. Use 'TBD' if unknown.",
         "If input is casual chat, set has_academic_content=False and write a friendly response in assistant_reply."
     ]
@@ -93,7 +93,6 @@ def parse_with_milo(content_items: list):
             st.error("MILO engine error: " + str(e))
             return None
 
-# Top Header: Logo on left
 logo_svg = (
     "<svg width='180' height='60' viewBox='0 0 240 80' style='user-select:none;display:block;margin-bottom:1.5rem'>"
     "<text x='5' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64' letter-spacing='3'>MIL</text>"
@@ -179,10 +178,13 @@ with right:
         else:
             df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date BETWEEN ? AND ? ORDER BY id DESC", conn, params=(str(mon), str(sun)))
         
+        # Made text size smaller (0.86rem) and tightened margins
         items_html = "".join([
-            "<div style='margin-top:14px;border-bottom:1px solid #1e293b;padding-bottom:8px'><b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " <small style='color:#64748b'>" + str(r.logged_date) + "</small></div>"
+            "<div style='margin-top:8px;border-bottom:1px solid #1e293b;padding-bottom:5px;font-size:0.86rem'>"
+            "<b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " "
+            "<small style='color:#64748b'>[" + str(r.logged_date) + "]</small></div>"
             for _, r in df.iterrows()
-        ]) or "<p style='color:#64748b;padding-top:45px;text-align:center'>No discussions logged for this period yet.</p>"
+        ]) or "<p style='color:#64748b;padding-top:35px;text-align:center;font-size:0.9rem'>No discussions logged for this period yet.</p>"
         st.markdown(items_html, unsafe_allow_html=True)
 
 st.write("")
