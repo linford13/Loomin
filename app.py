@@ -14,21 +14,21 @@ st.set_page_config(page_title="MILO", page_icon="📌", layout="wide")
 st.markdown(
     "<style>"
     ".stApp{background:#0b0f17;color:#f1f5f9}"
-    ".block-container{padding-top:1.8rem;max-width:1150px}"
-    "[data-testid='stChatInput']{background:#fceee8!important;border-radius:32px!important;padding:6px 12px!important;border:none!important;box-shadow:none!important}"
+    ".block-container{padding-top:1.2rem;max-width:1200px}"
+    "[data-testid='stChatInput']{background:#fceee8!important;border-radius:32px!important;padding:6px 14px!important;border:none!important;box-shadow:none!important;max-width:750px;margin:0 auto}"
     "[data-testid='stChatInput']>div{background:transparent!important;border:none!important;box-shadow:none!important}"
     "[data-testid='stChatInput'] textarea{color:#18181b!important;font-size:1rem!important}"
     "[data-testid='stChatInput'] textarea::placeholder{color:#6e655f!important;opacity:1!important}"
     "[data-testid='stChatInput'] button{color:#18181b!important}"
-    ".reply-txt{text-align:center;color:#e2e8f0;font-size:1rem;margin:10px 0 4px 0}"
+    ".reply-txt{text-align:center;color:#e2e8f0;font-size:0.95rem;margin:8px auto;max-width:750px}"
     ".sticky{position:relative;background:#fbf7dc;color:#27272a;padding:28px 18px 18px;border-radius:4px;"
-    "box-shadow:0 12px 24px rgba(0,0,0,.5);transform:rotate(-2deg);min-height:280px;font-family:cursive,sans-serif}"
+    "box-shadow:0 12px 24px rgba(0,0,0,.5);transform:rotate(-1.5deg);min-height:280px;font-family:cursive,sans-serif}"
     ".pin{position:absolute;top:-11px;left:50%;transform:translateX(-50%);width:22px;height:22px;"
     "background:radial-gradient(circle at 35% 35%,#ff4b4b,#8a0b0b);border-radius:50%;box-shadow:0 3px 6px rgba(0,0,0,.5)}"
     ".stitle{font-weight:700;border-bottom:2px dashed #d1c79f;padding-bottom:6px;margin-bottom:10px;text-align:center}"
     ".sitem{font-size:.88rem;margin-bottom:8px;padding-bottom:5px;border-bottom:1px dotted #e2d9b5}"
-    "[data-testid='stVerticalBlockBorderWrapper']{border:2.5px solid #ffffff!important;border-radius:28px!important;padding:22px!important;min-height:290px!important;background:#0b0f17!important}"
-    "div[data-baseweb='select']>div{background:#e5e7eb!important;color:#111827!important;border-radius:8px!important;border:none!important;font-weight:600}"
+    "[data-testid='stVerticalBlockBorderWrapper']{border:2.5px solid #ffffff!important;border-radius:28px!important;padding:22px!important;min-height:300px!important;background:#0b0f17!important}"
+    "div[data-baseweb='select']>div{background:#1e293b!important;color:#f8fafc!important;border-radius:10px!important;border:1px solid #334155!important;font-weight:600}"
     "</style>",
     unsafe_allow_html=True
 )
@@ -59,8 +59,10 @@ class Payload(BaseModel):
     topics: List[Topic]
     dues: List[Due]
 
+# Static Logo Alignment
 logo_svg = (
-    "<svg width='175' height='60' viewBox='0 0 240 80' style='margin-bottom:10px;user-select:none'>"
+    "<div style='margin-bottom:1.5rem'>"
+    "<svg width='160' height='50' viewBox='0 0 240 80' style='user-select:none'>"
     "<text x='5' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64' letter-spacing='3'>MIL</text>"
     "<line x1='128' y1='61' x2='162' y2='61' stroke='#ffffff' stroke-width='1.5'/>"
     "<text x='158' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64'>O</text>"
@@ -69,18 +71,19 @@ logo_svg = (
     "<text x='144' y='54' fill='#ffffff' font-size='12'>✦</text>"
     "<text x='214' y='34' fill='#ffffff' font-size='12'>✦</text>"
     "</svg>"
+    "</div>"
 )
 st.markdown(logo_svg, unsafe_allow_html=True)
 
-_, chat_col, _ = st.columns([1, 3.2, 1])
-with chat_col:
-    prompt = st.chat_input(
-        "Ask MILO, paste lecture updates, or drop deadlines...",
-        accept_file="multiple",
-        file_type=["png", "jpg", "jpeg", "pdf", "txt"]
-    )
-    if "reply" in st.session_state and st.session_state["reply"]:
-        st.markdown("<div class='reply-txt'>" + st.session_state["reply"] + "</div>", unsafe_allow_html=True)
+# Centered Chat Bar
+prompt = st.chat_input(
+    "Ask MILO, paste lecture updates, or drop deadlines...",
+    accept_file="multiple",
+    file_type=["png", "jpg", "jpeg", "pdf", "txt"]
+)
+
+if "reply" in st.session_state and st.session_state["reply"]:
+    st.markdown("<div class='reply-txt'>" + st.session_state["reply"] + "</div>", unsafe_allow_html=True)
 
 if prompt:
     txt = getattr(prompt, "text", "") or ""
@@ -119,7 +122,9 @@ if prompt:
                 st.rerun()
 
 st.write("")
-left, right = st.columns([1, 2], gap="large")
+st.write("")
+
+left, right = st.columns([1, 1.8], gap="large")
 
 with left:
     dues = pd.read_sql_query("SELECT * FROM dues WHERE status='Pending' ORDER BY due_date ASC LIMIT 5", conn)
@@ -138,9 +143,10 @@ with left:
 
 with right:
     with st.container(border=True):
-        sc1, sc2 = st.columns([1.3, 1.7])
+        sc1, _ = st.columns([1.5, 1.5])
         with sc1:
             mode = st.selectbox("View", ["Today's Discussion", "This Week (Mon - Sun)"], label_visibility="collapsed")
+        
         td = date.today()
         mon = td - timedelta(days=td.weekday())
         sun = mon + timedelta(days=6)
@@ -148,8 +154,9 @@ with right:
             df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date=? ORDER BY id DESC", conn, params=(str(td),))
         else:
             df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date BETWEEN ? AND ? ORDER BY id DESC", conn, params=(str(mon), str(sun)))
+        
         items_html = "".join([
-            "<div style='margin-top:12px;border-bottom:1px solid #1e293b;padding-bottom:6px'><b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " <small style='color:#64748b'>" + str(r.logged_date) + "</small></div>"
+            "<div style='margin-top:14px;border-bottom:1px solid #1e293b;padding-bottom:8px'><b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " <small style='color:#64748b'>" + str(r.logged_date) + "</small></div>"
             for _, r in df.iterrows()
         ]) or "<p style='color:#64748b;padding-top:45px;text-align:center'>No discussions logged for this period yet.</p>"
         st.markdown(items_html, unsafe_allow_html=True)
