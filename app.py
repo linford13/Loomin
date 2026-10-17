@@ -27,8 +27,11 @@ st.markdown(
     "background:radial-gradient(circle at 35% 35%,#ff4b4b,#8a0b0b);border-radius:50%;box-shadow:0 3px 6px rgba(0,0,0,.5)}"
     ".stitle{font-weight:700;border-bottom:2px dashed #d1c79f;padding-bottom:6px;margin-bottom:10px;text-align:center}"
     ".sitem{font-size:.88rem;margin-bottom:8px;padding-bottom:5px;border-bottom:1px dotted #e2d9b5}"
-    "[data-testid='stVerticalBlockBorderWrapper']{border:2.5px solid #ffffff!important;border-radius:28px!important;padding:22px!important;min-height:300px!important;background:#0b0f17!important}"
+    "[data-testid='stVerticalBlockBorderWrapper']{border:2.5px solid #ffffff!important;border-radius:28px!important;padding:22px!important;height:340px!important;max-height:340px!important;background:#0b0f17!important;overflow:hidden!important}"
     "div[data-baseweb='select']>div{background:#1e293b!important;color:#f8fafc!important;border-radius:10px!important;border:1px solid #334155!important;font-weight:600}"
+    ".scrollable-disc{max-height:225px;overflow-y:auto;padding-right:8px;margin-top:10px}"
+    ".scrollable-disc::-webkit-scrollbar{width:5px}"
+    ".scrollable-disc::-webkit-scrollbar-thumb{background:#334155;border-radius:10px}"
     "</style>",
     unsafe_allow_html=True
 )
@@ -178,14 +181,14 @@ with right:
         else:
             df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date BETWEEN ? AND ? ORDER BY id DESC", conn, params=(str(mon), str(sun)))
         
-        # Made text size smaller (0.86rem) and tightened margins
         items_html = "".join([
-            "<div style='margin-top:8px;border-bottom:1px solid #1e293b;padding-bottom:5px;font-size:0.86rem'>"
+            "<div style='margin-bottom:8px;border-bottom:1px solid #1e293b;padding-bottom:5px;font-size:0.86rem'>"
             "<b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " "
             "<small style='color:#64748b'>[" + str(r.logged_date) + "]</small></div>"
             for _, r in df.iterrows()
-        ]) or "<p style='color:#64748b;padding-top:35px;text-align:center;font-size:0.9rem'>No discussions logged for this period yet.</p>"
-        st.markdown(items_html, unsafe_allow_html=True)
+        ]) or "<p style='color:#64748b;padding-top:35px;text-align:center;font-size:0.9name'>No discussions logged for this period yet.</p>"
+        
+        st.markdown("<div class='scrollable-disc'>" + items_html + "</div>", unsafe_allow_html=True)
 
 st.write("")
 with st.expander("⚙️ Manage / Reset Database"):
