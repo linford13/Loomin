@@ -79,7 +79,7 @@ def parse_with_ai(content_items: list) -> Optional[AcademicPayload]:
 
     try:
         response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -90,8 +90,10 @@ def parse_with_ai(content_items: list) -> Optional[AcademicPayload]:
             return response.parsed
         return AcademicPayload.model_validate_json(response.text)
     except Exception as e:
-        st.error(f"API Error (gemini-2.5-flash): {e}")
-        return None# ----------------- UI Layout -----------------
+        st.error(f"API Error (gemini-3.8-flash): {e}")
+        return None
+
+# ----------------- UI Layout -----------------
 st.title("🎓 Academic Work & Dues Tracker")
 
 with st.expander("📝 Log Notes, Blackboard Snaps, or Circular PDFs", expanded=True):
@@ -188,46 +190,3 @@ with col1:
                     conn.commit()
                     st.rerun()
             st.write("---")
-
-with col2:
-    st.subheader("📚 Syllabus Covered (Recent)")
-    topics_df = pd.read_sql_query("SELECT subject, summary, logged_date FROM topics ORDER BY logged_date DESC LIMIT 10", conn)
-    
-    if topics_df.empty:
-        st.info("No lecture topics logged yet.")
-    else:
-        st.dataframe(topics_df, use_container_width=True, hide_index=True)
-
-# ----------------- Summarizer Reports -----------------
-st.divider()
-st.subheader("📊 Generate Summary Reports")
-rep_col1, rep_col2 = st.columns(2)
-
-with rep_col1:
-    if st.button("Generate Daily Digest"):
-        daily_topics = pd.read_sql_query("SELECT subject, summary FROM topics WHERE logged_date = ?", conn, params=(str(date.today()),))
-        daily_dues = pd.read_sql_query("SELECT subject, task, due_date FROM dues WHERE status = 'Pending'", conn)
-        
-        st.markdown(f"### 📘 Daily Recap — {date.today().isoformat()}")
-        if daily_topics.empty:
-            st.write("No new topics logged today.")
-        else:
-            st.markdown("**Topics Covered:**")
-            for _, r in daily_topics.iterrows():
-                st.markdown(f"- **{r['subject']}**: {r['summary']}")
-        
-        st.markdown("**Active Dues:**")
-        for _, r in daily_dues.iterrows():
-            st.markdown(f"- ⚠️ **{r['subject']}**: {r['task']} (Due: `{r['due_date']}`)")
-
-with rep_col2:
-    if st.button("Generate Weekly Roll-Up"):
-        all_topics = pd.read_sql_query("SELECT subject, summary, logged_date FROM topics ORDER BY logged_date DESC LIMIT 15", conn)
-        st.markdown("### 🗓️ Weekly Academic Overview")
-        if all_topics.empty:
-            st.write("No topics logged this week.")
-        else:
-            for _, r in all_topics.iterrows():
-                st.markdown(f"- `{r['logged_date']}` **[{r['subject']}]**: {r['summary']}")
-
-conn.close()
