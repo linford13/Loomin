@@ -41,4 +41,117 @@ if not KEY:
 client = genai.Client(api_key=KEY)
 conn = sqlite3.connect("milo_study.db")
 conn.execute("CREATE TABLE IF NOT EXISTS topics(id INTEGER PRIMARY KEY,subject TEXT,topic TEXT,module TEXT,logged_date TEXT)")
-conn.execute("CREATE TABLE IF NOT EXISTS dues(
+conn.execute("CREATE TABLE IF NOT EXISTS dues(id INTEGER PRIMARY KEY,subject TEXT,task TEXT,due_date TEXT,status TEXT)")
+
+class Topic(BaseModel):
+    subject: str
+    topic: str
+    module: str
+
+class Due(BaseModel):
+    subject: str
+    task: str
+    due_date: str
+
+class Payload(BaseModel):
+    is_study: bool
+    reply: str
+    topics: List[Topic]
+    dues: List[Due]
+
+logo_svg = (
+    "<svg width='175' height='60' viewBox='0 0 240 80' style='margin-bottom:10px;user-select:none'>"
+    "<text x='5' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64' letter-spacing='3'>MIL</text>"
+    "<line x1='128' y1='61' x2='162' y2='61' stroke='#ffffff' stroke-width='1.5'/>"
+    "<text x='158' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64'>O</text>"
+    "<ellipse cx='185' cy='40' rx='38' ry='11' fill='none' stroke='#ffffff' stroke-width='1' transform='rotate(-22 185 40)'/>"
+    "<ellipse cx='185' cy='40' rx='38' ry='8' fill='none' stroke='#ffffff' stroke-width='0.8' transform='rotate(-16 185 40)'/>"
+    "<text x='144' y='54' fill='#ffffff' font-size='12'>✦</text>"
+    "<text x='214' y='34' fill='#ffffff' font-size='12'>✦</text>"
+    "</svg>"
+)
+st.markdown(logo_svg, unsafe_allow_html=True)
+
+_, chat_col, _ = st.columns([1, 3.2, 1])
+with chat_col:
+    prompt = st.chat_input(
+        "Ask MILO, paste lecture updates, or drop deadlines...",
+        accept_file="multiple",
+        file_type=["png", "jpg", "jpeg", "pdf", "txt"]
+    )
+    if "reply" in st.session_state and st.session_state["reply"]:
+        st.markdown("<div class='reply-txt'>" + st.session_state["reply"] + "</div>", unsafe_allow_html=True)
+
+if prompt:
+    txt = getattr(prompt, "text", "") or ""
+    files = getattr(prompt, "files", []) or []
+    if txt.strip() or files:
+        items = ["Today is " + date.today().isoformat() + ". Extract topics and dues (YYYY-MM-DD). Set is_study=False if casual chat."]
+        if txt.strip():
+            items.append(txt)
+        for f in files:
+            if "image" in f.type:
+                items.append(Image.open(f))
+            elif "pdf" in f.type:
+                items.append("\n".join([p.extract_text() or "" for p in PdfReader(f).pages[:8]])[:5000])
+            else:
+                items.append(f.read().decode("utf-8")[:5000])
+        with st.spinner(""):
+            try:
+                r = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=items,
+                    config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Payload)
+                )
+                data = r.parsed or Payload.model_validate_json(r.text)
+                if not data.is_study:
+                    st.session_state["reply"] = data.reply or "Hey! Send class notes or deadlines anytime."
+                else:
+                    st.session_state["reply"] = ""
+                    for t in data.topics:
+                        conn.execute("INSERT INTO topics(subject,topic,module,logged_date)VALUES(?,?,?,?)", (t.subject, t.topic, t.module or "General", str(date.today())))
+                    for d in data.dues:
+                        conn.execute("INSERT INTO dues(subject,task,due_date,status)VALUES(?,?,?,'Pending')", (d.subject, d.task, d.due_date or "TBD"))
+                    conn.commit()
+                st.rerun()
+            except Exception as e:
+                st.session_state["reply"] = "Error: " + str(e)
+                st.rerun()
+
+st.write("")
+left, right = st.columns([1, 2], gap="large")
+
+with left:
+    dues = pd.read_sql_query("SELECT * FROM dues WHERE status='Pending' ORDER BY due_date ASC LIMIT 5", conn)
+    rows = "".join([
+        "<div class='sitem'><b>[" + str(r.subject) + "]</b> " + str(r.task) + "<br><span style='color:#dc2626'>Due: " + str(r.due_date) + "</span></div>"
+        for _, r in dues.iterrows()
+    ]) or "<div style='text-align:center;padding-top:45px'>No dues pending!</div>"
+    st.markdown("<div class='sticky'><div class='pin'></div><div class='stitle'>UPCOMING DUES</div>" + rows + "</div>", unsafe_allow_html=True)
+    if not dues.empty:
+        with st.expander("Mark Complete"):
+            for _, r in dues.iterrows():
+                if st.button("✓ " + str(r.subject) + ": " + str(r.task)[:15], key="d" + str(r.id), use_container_width=True):
+                    conn.execute("UPDATE dues SET status='Done' WHERE id=?", (int(r.id),))
+                    conn.commit()
+                    st.rerun()
+
+with right:
+    with st.container(border=True):
+        sc1, sc2 = st.columns([1.3, 1.7])
+        with sc1:
+            mode = st.selectbox("View", ["Today's Discussion", "This Week (Mon - Sun)"], label_visibility="collapsed")
+        td = date.today()
+        mon = td - timedelta(days=td.weekday())
+        sun = mon + timedelta(days=6)
+        if mode == "Today's Discussion":
+            df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date=? ORDER BY id DESC", conn, params=(str(td),))
+        else:
+            df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date BETWEEN ? AND ? ORDER BY id DESC", conn, params=(str(mon), str(sun)))
+        items_html = "".join([
+            "<div style='margin-top:12px;border-bottom:1px solid #1e293b;padding-bottom:6px'><b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " <small style='color:#64748b'>" + str(r.logged_date) + "</small></div>"
+            for _, r in df.iterrows()
+        ]) or "<p style='color:#64748b;padding-top:45px;text-align:center'>No discussions logged for this period yet.</p>"
+        st.markdown(items_html, unsafe_allow_html=True)
+
+conn.close()
