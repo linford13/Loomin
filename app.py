@@ -14,13 +14,13 @@ st.set_page_config(page_title="MILO", page_icon="📌", layout="wide")
 st.markdown(
     "<style>"
     ".stApp{background:#0b0f17;color:#f1f5f9}"
-    ".block-container{padding-top:1rem;max-width:1200px}"
-    "[data-testid='stChatInput']{background:#fceee8!important;border-radius:32px!important;padding:6px 14px!important;border:none!important;box-shadow:none!important}"
+    ".block-container{padding-top:2.5rem;max-width:1200px}"
+    "[data-testid='stChatInput']{background:#fceee8!important;border-radius:32px!important;padding:6px 14px!important;border:none!important;box-shadow:none!important;max-width:800px;margin:0 auto 1.5rem auto}"
     "[data-testid='stChatInput']>div{background:transparent!important;border:none!important;box-shadow:none!important}"
     "[data-testid='stChatInput'] textarea{color:#18181b!important;font-size:1rem!important}"
     "[data-testid='stChatInput'] textarea::placeholder{color:#6e655f!important;opacity:1!important}"
     "[data-testid='stChatInput'] button{color:#18181b!important}"
-    ".reply-txt{color:#e2e8f0;font-size:0.95rem;margin:6px 0 12px 0}"
+    ".reply-txt{text-align:center;color:#e2e8f0;font-size:0.95rem;margin:0 auto 1.5rem auto;max-width:800px}"
     ".sticky{position:relative;background:#fbf7dc;color:#27272a;padding:28px 18px 18px;border-radius:4px;"
     "box-shadow:0 12px 24px rgba(0,0,0,.5);transform:rotate(-1.5deg);min-height:280px;font-family:cursive,sans-serif}"
     ".pin{position:absolute;top:-11px;left:50%;transform:translateX(-50%);width:22px;height:22px;"
@@ -59,31 +59,29 @@ class Payload(BaseModel):
     topics: List[Topic]
     dues: List[Due]
 
-# Top Layout: Logo on Left, Chat Bar spanning right
-top_left, top_right = st.columns([1.2, 3], gap="medium")
+# Top Header: Logo on left
+logo_svg = (
+    "<svg width='180' height='60' viewBox='0 0 240 80' style='user-select:none;display:block;margin-bottom:1.5rem'>"
+    "<text x='5' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64' letter-spacing='3'>MIL</text>"
+    "<line x1='128' y1='61' x2='162' y2='61' stroke='#ffffff' stroke-width='1.5'/>"
+    "<text x='158' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64'>O</text>"
+    "<ellipse cx='185' cy='40' rx='38' ry='11' fill='none' stroke='#ffffff' stroke-width='1' transform='rotate(-22 185 40)'/>"
+    "<ellipse cx='185' cy='40' rx='38' ry='8' fill='none' stroke='#ffffff' stroke-width='0.8' transform='rotate(-16 185 40)'/>"
+    "<text x='144' y='54' fill='#ffffff' font-size='12'>✦</text>"
+    "<text x='214' y='34' fill='#ffffff' font-size='12'>✦</text>"
+    "</svg>"
+)
+st.markdown(logo_svg, unsafe_allow_html=True)
 
-with top_left:
-    logo_svg = (
-        "<svg width='160' height='55' viewBox='0 0 240 80' style='user-select:none;margin-top:5px'>"
-        "<text x='5' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64' letter-spacing='3'>MIL</text>"
-        "<line x1='128' y1='61' x2='162' y2='61' stroke='#ffffff' stroke-width='1.5'/>"
-        "<text x='158' y='62' fill='#ffffff' font-family='Georgia,serif' font-size='64'>O</text>"
-        "<ellipse cx='185' cy='40' rx='38' ry='11' fill='none' stroke='#ffffff' stroke-width='1' transform='rotate(-22 185 40)'/>"
-        "<ellipse cx='185' cy='40' rx='38' ry='8' fill='none' stroke='#ffffff' stroke-width='0.8' transform='rotate(-16 185 40)'/>"
-        "<text x='144' y='54' fill='#ffffff' font-size='12'>✦</text>"
-        "<text x='214' y='34' fill='#ffffff' font-size='12'>✦</text>"
-        "</svg>"
-    )
-    st.markdown(logo_svg, unsafe_allow_html=True)
+# Centered Chat Bar
+prompt = st.chat_input(
+    "Ask MILO, paste lecture updates, or drop deadlines...",
+    accept_file="multiple",
+    file_type=["png", "jpg", "jpeg", "pdf", "txt"]
+)
 
-with top_right:
-    prompt = st.chat_input(
-        "Ask MILO, paste lecture updates, or drop deadlines...",
-        accept_file="multiple",
-        file_type=["png", "jpg", "jpeg", "pdf", "txt"]
-    )
-    if "reply" in st.session_state and st.session_state["reply"]:
-        st.markdown("<div class='reply-txt'>" + st.session_state["reply"] + "</div>", unsafe_allow_html=True)
+if "reply" in st.session_state and st.session_state["reply"]:
+    st.markdown("<div class='reply-txt'>" + st.session_state["reply"] + "</div>", unsafe_allow_html=True)
 
 if prompt:
     txt = getattr(prompt, "text", "") or ""
@@ -121,7 +119,6 @@ if prompt:
                 st.session_state["reply"] = "Error: " + str(e)
                 st.rerun()
 
-st.write("")
 st.write("")
 
 # Main Body Grid: Left Sticky Note, Right Discussion Slate
