@@ -1,5 +1,4 @@
-import os
-import sqlite3
+import os, sqlite3
 from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
@@ -10,259 +9,125 @@ from pypdf import PdfReader
 from google import genai
 from google.genai import types
 
-st.set_page_config(
-    page_title="MILO",
-    page_icon="📌",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+st.set_page_config(page_title="MILO", page_icon="📌", layout="wide")
+
+st.markdown(
+    "<style>"
+    ".stApp{background:#0b0f17;color:#f1f5f9}"
+    ".milo-logo{font:700 2.8rem Georgia,serif;color:#fff;margin-bottom:1.2rem}"
+    ".sticky{position:relative;background:#fbf7dc;color:#27272a;padding:26px 18px 18px;border-radius:4px;"
+    "box-shadow:0 10px 20px rgba(0,0,0,.45);transform:rotate(-1.5deg);min-height:270px;font-family:cursive,sans-serif}"
+    ".pin{position:absolute;top:-11px;left:50%;transform:translateX(-50%);width:22px;height:22px;"
+    "background:radial-gradient(circle at 35% 35%,#ff4b4b,#8a0b0b);border-radius:50%;box-shadow:0 3px 6px rgba(0,0,0,.5)}"
+    ".stitle{font-weight:700;border-bottom:2px dashed #d1c79f;padding-bottom:6px;margin-bottom:10px;text-align:center}"
+    ".sitem{font-size:.88rem;margin-bottom:8px;padding-bottom:5px;border-bottom:1px dotted #e2d9b5}"
+    ".stTextInput input{background:#fceee8!important;color:#111!important;border-radius:30px!important;padding:12px 20px!important;border:none!important}"
+    "[data-testid='stForm']{border:none!important;padding:0!important}"
+    ".dbox{border:2px solid #fff;border-radius:24px;padding:20px;min-height:270px}"
+    "</style>",
+    unsafe_allow_html=True
 )
 
-css_rules = [
-    "<style>",
-    ".stApp { background-color: #0b0f17; color: #f1f5f9; }",
-    ".block-container { padding-top: 2rem; max-width: 1200px; }",
-    ".milo-logo { font-family: Georgia, serif; font-size: 2.8rem; ",
-    "font-weight: 700; color: #ffffff; margin-bottom: 1.5rem; }",
-    ".sticky-container { position: relative; background: #fbf7dc; ",
-    "color: #27272a; padding: 28px 20px 20px 20px; border-radius: 4px; ",
-    "box-shadow: 0 12px 24px rgba(0,0,0,0.45); transform: rotate(-1.5deg); ",
-    "min-height: 290px; font-family: cursive, sans-serif; }",
-    ".pin { position: absolute; top: -12px; left: 50%; ",
-    "transform: translateX(-50%); width: 24px; height: 24px; ",
-    "background: radial-gradient(circle at 35% 35%, #ff4b4b, #8a0b0b); ",
-    "border-radius: 50%; box-shadow: 0 4px 8px rgba(0,0,0,0.5); }",
-    ".sticky-title { font-weight: bold; font-size: 1.05rem; ",
-    "border-bottom: 2px dashed #d1c79f; padding-bottom: 6px; ",
-    "margin-bottom: 12px; color: #18181b; text-align: center; }",
-    ".sticky-item { font-size: 0.88rem; line-height: 1.35; ",
-    "margin-bottom: 10px; padding-bottom: 6px; ",
-    "border-bottom: 1px dotted #e2d9b5; }",
-    ".stTextInput > div > div > input { background-color: #fceee8 !important; ",
-    "color: #1a1a1a !important; border-radius: 30px !important; ",
-    "padding: 14px 22px !important; border: none !important; }",
-    "[data-testid='stForm'] { border: none !important; padding: 0 !important; }",
-    "</style>"
-]
-st.markdown("".join(css_rules), unsafe_allow_html=True)
-
-GEMINI_API_KEY = None
-try:
-    if "GEMINI_API_KEY" in st.secrets:
-        GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-except Exception:
-    GEMINI_API_KEY = None
-
-if not GEMINI_API_KEY:
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not GEMINI_API_KEY:
-    st.error("GEMINI_API_KEY is missing from Streamlit Secrets.")
+KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not KEY:
+    st.error("Missing GEMINI_API_KEY in Secrets.")
     st.stop()
 
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
-DB_FILE = "milo_study.db"
+client = genai.Client(api_key=KEY)
+DB = "milo_study.db"
 
+conn = sqlite3.connect(DB)
+conn.execute("CREATE TABLE IF NOT EXISTS topics(id INTEGER PRIMARY KEY,subject TEXT,topic TEXT,module TEXT,logged_date TEXT)")
+conn.execute("CREATE TABLE IF NOT EXISTS dues(id INTEGER PRIMARY KEY,subject TEXT,task TEXT,due_date TEXT,status TEXT)")
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    q1 = (
-        "CREATE TABLE IF NOT EXISTS topics ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "subject TEXT, topic TEXT, module TEXT, logged_date TEXT)"
-    )
-    q2 = (
-        "CREATE TABLE IF NOT EXISTS dues ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "subject TEXT, task TEXT, due_date TEXT, "
-        "priority TEXT, status TEXT DEFAULT 'Pending')"
-    )
-    c.execute(q1)
-    c.execute(q2)
-    conn.commit()
-    conn.close()
-
-
-init_db()
-
-
-class ExtractedTopic(BaseModel):
+class Topic(BaseModel):
     subject: str
     topic: str
     module: str
 
-
-class ExtractedDue(BaseModel):
+class Due(BaseModel):
     subject: str
     task: str
     due_date: str
-    priority: str
 
-
-class MiloPayload(BaseModel):
-    has_academic_content: bool
-    assistant_reply: str
-    topics: List[ExtractedTopic]
-    dues: List[ExtractedDue]
-
-
-def parse_with_milo(content_items: list):
-    today_iso = date.today().isoformat()
-    prompt_parts = [
-        "Current Date: " + today_iso,
-        "You are MILO, an academic tracker for a college student.",
-        "Extract topics taught and upcoming dues from notes or files.",
-        "Use 'General' if module is unknown.",
-        "Convert relative dates (like tomorrow or Friday) to YYYY-MM-DD.",
-        "Use 'TBD' if due_date is unknown, and 'Normal' or 'High' for priority.",
-        "If input is casual chat, set has_academic_content=False ",
-        "and write a friendly response in assistant_reply."
-    ]
-    sys_prompt = "\n".join(prompt_parts)
-    try:
-        response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=[sys_prompt] + content_items,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=MiloPayload
-            )
-        )
-        if response.parsed:
-            return response.parsed
-        return MiloPayload.model_validate_json(response.text)
-    except Exception as e:
-        st.error("MILO engine error: " + str(e))
-        return None
-
+class Payload(BaseModel):
+    is_study: bool
+    reply: str
+    topics: List[Topic]
+    dues: List[Due]
 
 st.markdown("<div class='milo-logo'>MILO</div>", unsafe_allow_html=True)
 
-with st.container():
-    with st.form("milo_chat_form", clear_on_submit=True):
-        f_col1, f_col2 = st.columns([10, 2])
-        with f_col1:
-            chat_text = st.text_input(
-                "Chat Input",
-                placeholder="Ask MILO, paste lecture updates, or drop dues...",
-                label_visibility="collapsed"
-            )
-        with f_col2:
-            submit_btn = st.form_submit_button(
-                "Send",
-                use_container_width=True
-            )
-        with st.expander("+ Attach Files (Photos, Syllabus PDFs, Notes)"):
-            uploaded_files = st.file_uploader(
-                "Upload files",
-                type=["png", "jpg", "jpeg", "pdf", "txt"],
-                accept_multiple_files=True,
-                label_visibility="collapsed"
-            )
+with st.form("chat", clear_on_submit=True):
+    c1, c2 = st.columns([10, 2])
+    txt = c1.text_input("Msg", placeholder="Ask MILO, paste lecture updates, or drop deadlines...", label_visibility="collapsed")
+    send = c2.form_submit_button("Send", use_container_width=True)
+    with st.expander("+ Attach Files (Photos, PDFs, Notes)"):
+        files = st.file_uploader("Files", type=["png", "jpg", "jpeg", "pdf", "txt"], accept_multiple_files=True, label_visibility="collapsed")
 
-if submit_btn and (chat_text.strip() or uploaded_files):
-    payload_items = []
-    if chat_text.strip():
-        payload_items.append("Notes:\n" + chat_text)
-    if uploaded_files:
-        for f in uploaded_files:
-            if "image" in f.type:
-                payload_items.append(Image.open(f))
-            elif "pdf" in f.type:
-                reader = PdfReader(f)
-                pages = [p.extract_text() or "" for p in reader.pages[:10]]
-                txt = "\n".join(pages)
-                payload_items.append("PDF (" + f.name + "):\n" + txt[:6000])
-            elif "text" in f.type:
-                raw_txt = f.read().decode("utf-8")[:6000]
-                payload_items.append("Text (" + f.name + "):\n" + raw_txt)
-
-    with st.spinner("MILO is parsing..."):
-        res = parse_with_milo(payload_items)
-        if res is not None:
-            if not res.has_academic_content:
-                reply = res.assistant_reply
-                if not reply:
-                    reply = "Hey! Send me your class updates or dues."
-                st.info(reply)
+if send and (txt.strip() or files):
+    items = ["Today is " + date.today().isoformat() + ". Extract topics and dues (YYYY-MM-DD). Set is_study=False if casual chat."]
+    if txt.strip():
+        items.append(txt)
+    for f in (files or []):
+        if "image" in f.type:
+            items.append(Image.open(f))
+        elif "pdf" in f.type:
+            items.append("\n".join([p.extract_text() or "" for p in PdfReader(f).pages[:8]])[:5000])
+        else:
+            items.append(f.read().decode("utf-8")[:5000])
+    with st.spinner("MILO is thinking..."):
+        try:
+            r = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=items,
+                config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=Payload)
+            )
+            data = r.parsed or Payload.model_validate_json(r.text)
+            if not data.is_study:
+                st.info(data.reply or "Hey! Send class notes or deadlines to log them.")
             else:
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                q_ins_t = (
-                    "INSERT INTO topics "
-                    "(subject, topic, module, logged_date) "
-                    "VALUES (?, ?, ?, ?)"
-                )
-                for t in res.topics:
-                    mod_val = t.module if t.module else "General"
-                    c.execute(
-                        q_ins_t,
-                        (t.subject, t.topic, mod_val, str(date.today()))
-                    )
-                q_ins_d = (
-                    "INSERT INTO dues "
-                    "(subject, task, due_date, priority, status) "
-                    "VALUES (?, ?, ?, ?, 'Pending')"
-                )
-                for d in res.dues:
-                    due_val = d.due_date if d.due_date else "TBD"
-                    prio_val = d.priority if d.priority else "Normal"
-                    c.execute(
-                        q_ins_d,
-                        (d.subject, d.task, due_val, prio_val)
-                    )
+                for t in data.topics:
+                    conn.execute("INSERT INTO topics(subject,topic,module,logged_date)VALUES(?,?,?,?)", (t.subject, t.topic, t.module or "General", str(date.today())))
+                for d in data.dues:
+                    conn.execute("INSERT INTO dues(subject,task,due_date,status)VALUES(?,?,?,'Pending')", (d.subject, d.task, d.due_date or "TBD"))
                 conn.commit()
-                conn.close()
                 st.rerun()
+        except Exception as e:
+            st.error("Error: " + str(e))
 
-st.write("")
-st.write("")
+left, right = st.columns([1, 2], gap="large")
 
-col_left, col_right = st.columns([1, 2], gap="large")
-conn = sqlite3.connect(DB_FILE)
-
-with col_left:
-    q_dues = (
-        "SELECT id, subject, task, due_date FROM dues "
-        "WHERE status = 'Pending' ORDER BY due_date ASC LIMIT 5"
-    )
-    dues = pd.read_sql_query(q_dues, conn)
-
-    items_list = []
-    if dues.empty:
-        empty_note = (
-            "<div style='text-align:center; padding-top:40px; "
-            "color:#52525b;'>No dues pending!<br>Enjoy your day</div>"
-        )
-        items_list.append(empty_note)
-    else:
-        for _, row in dues.iterrows():
-            s_subj = str(row["subject"])
-            s_task = str(row["task"])
-            s_due = str(row["due_date"])
-            item_html = (
-                "<div class='sticky-item'>"
-                + "<strong>[" + s_subj + "]</strong> " + s_task + "<br>"
-                + "<span style='color: #dc2626;'>Due: " + s_due + "</span>"
-                + "</div>"
-            )
-            items_list.append(item_html)
-
-    sticky_html = (
-        "<div class='sticky-container'>"
-        + "<div class='pin'></div>"
-        + "<div class='sticky-title'>UPCOMING DUES</div>"
-        + "".join(items_list)
-        + "</div>"
-    )
-    st.markdown(sticky_html, unsafe_allow_html=True)
-
+with left:
+    dues = pd.read_sql_query("SELECT * FROM dues WHERE status='Pending' ORDER BY due_date ASC LIMIT 5", conn)
+    rows = "".join([
+        "<div class='sitem'><b>[" + str(r.subject) + "]</b> " + str(r.task) + "<br><span style='color:#dc2626'>Due: " + str(r.due_date) + "</span></div>"
+        for _, r in dues.iterrows()
+    ]) or "<div style='text-align:center;padding-top:40px'>No dues pending!</div>"
+    st.markdown("<div class='sticky'><div class='pin'></div><div class='stitle'>UPCOMING DUES</div>" + rows + "</div>", unsafe_allow_html=True)
     if not dues.empty:
-        with st.expander("Mark a Due Complete"):
+        with st.expander("Mark Complete"):
             for _, r in dues.iterrows():
-                row_id = int(r["id"])
-                lbl = "Done: " + str(r["subject"]) + " - " + str(r["task"])[:16]
-                if st.button(lbl, key="done_" + str(row_id), use_container_width=True):
-                    cur = conn.cursor()
-                    cur.execute(
-                        "UPDATE dues
+                if st.button("Done: " + str(r.subject) + " - " + str(r.task)[:15], key="d" + str(r.id), use_container_width=True):
+                    conn.execute("UPDATE dues SET status='Done' WHERE id=?", (int(r.id),))
+                    conn.commit()
+                    st.rerun()
+
+with right:
+    mode = st.selectbox("View", ["Today's Discussion", "This Week (Mon - Sun)"], label_visibility="collapsed")
+    td = date.today()
+    mon = td - timedelta(days=td.weekday())
+    sun = mon + timedelta(days=6)
+    if mode == "Today's Discussion":
+        df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date=? ORDER BY id DESC", conn, params=(str(td),))
+        hdr = "Discussed Today (" + td.strftime("%b %d") + ")"
+    else:
+        df = pd.read_sql_query("SELECT * FROM topics WHERE logged_date BETWEEN ? AND ? ORDER BY id DESC", conn, params=(str(mon), str(sun)))
+        hdr = "Week: " + mon.strftime("%b %d") + " - " + sun.strftime("%b %d")
+    items_html = "".join([
+        "<div style='margin-bottom:10px;border-bottom:1px solid #1e293b;padding-bottom:6px'><b>[" + str(r.subject) + "]</b> (" + str(r.module) + "): " + str(r.topic) + " <small style='color:#64748b'>" + str(r.logged_date) + "</small></div>"
+        for _, r in df.iterrows()
+    ]) or "<p style='color:#64748b;padding-top:30px;text-align:center'>No discussions logged yet.</p>"
+    st.markdown("<div class='dbox'><h4 style='margin-top:0;color:#38bdf8'>" + hdr + "</h4>" + items_html + "</div>", unsafe_allow_html=True)
+
+conn.close()
